@@ -11,6 +11,8 @@ DoubletFinder was published by Cell Systems in April, 2019: https://www.cell.com
 
 ## Updates
 
+(06/28/2024) RQ: Implemented doubletFinder2 which creates only heterotypic doublets and evalustes for a series of pK
+
 (11/21/2023) Made compatible with Seurat v5 and removed '_v3' flag from relevant function names.
 
 (03/31/2020) Internalized functions normally in 'modes' package to enable compatibility with R v3.6 and highger.
@@ -77,6 +79,56 @@ DoubletFinder successfully recapitulates ground-truth doublet classifications de
 
 ![alternativetext](DF.screenshots/Results_Demux.png)
 ![alternativetext](DF.screenshots/Results_Hashing.png)
+
+# Example code for running doubletFinder2()
+* Pre-process your data. Replicating this is not necessary as data will be lognormalized
+or SCT transformed in the doubletFinder2() code anyways. But the annotations are STRONGLY
+recommended:
+```R
+seu <- PercentageFeatureSet(seu, pattern = "^MT-", col.name = "percent.mt")
+    
+seu <- SCTransform(seu,
+                   assay = 'RNA',
+                   new.assay.name = 'SCT',
+                   vst.flavor='v2',
+                   vars.to.regress = c('percent.mt'))
+
+
+seu <- seu %>% 
+  ScaleData(.) %>%
+  RunPCA(npcs = 30, verbose = FALSE) %>%
+  RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE, 
+          reduction.name='umap.unintegrated') %>% 
+  FindNeighbors(., reduction = "pca", dims = 1:30) %>%
+  FindClusters(., resolution = 0.8, cluster.name = "seurat_clusters")
+```
+
+Set up your doubletFinder run:
+```R
+# 0-1 numeric vector specifying the fraction of nearest neighbours to evaluate
+bcmvn <- data.frame(pK = c(0.005, seq(0.01, 0.3, by=0.01))) 
+
+# Number of cells to classify as doublets (a bit arbitrary)
+homotypic.prop <- modelHomotypic(seu$seurat_clusters)           
+nExp_poi <- round(0.075*nrow(seu@meta.data))  
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))  
+# or 
+nExp_poi.adj <- 350
+
+# Running doublet finder
+seu_dub_list <- tryCatch({
+  doubletFinder2(seu, PCs = 1:30, pN = 0.25, 
+                 pK = bcmvn$pK, nExp = nExp_poi.adj, 
+                 reuse.pANN = F, sct = T,
+                 annotations=as.character(seu$seurat_clusters),
+                 maxN=50)
+}, error=function(e){print("Fail at setup level!"); NULL})
+
+k.sel <- paste0("pANN_", bcmvn$pK[10])
+seu$df2_classification <- seu_dub_list$classifications[,k.sel]
+seu$df2_pANN <- seu_dub_list$pANN[,k.sel]
+```
+
 
 # 'Best-Practices' for scRNA-seq data generated without sample multiplexing
 
